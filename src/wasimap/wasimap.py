@@ -41,7 +41,39 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
         print("[wasimap]", format % args, file=sys.stdout, flush=True)
 
 
-
+#/////////////////////////////////////////////////////////////////////////////
+#
+# Calculates euclidean distances from every water to a given heavy-atom, in every frame.
+# I do this in a function so we can enqueue with a process pool in parallel
+#
+# id:         atomID of heavy-atom
+# anchordict: the result array
+# waters:     IDs of every water oxygen in the trajectory
+# trajxyz:    XYZ numpy array of traj object (passing the entire traj would eat up the memory)
+# around_nanometers: cuttoff distance
+#
+def processAtom(id, anchordict, waters, trajxyz, around_nanometers):
+    #for id in involved_ids:
+    print(f"Processing AtomID {id}")
+    wadict = {}
+    for water in waters:
+        #This is the magic.. we use numpy to compute euclideans from all waters to a heavy-atom, for all frames, in a flash :)
+        framebyframe = np.sqrt(np.sum((trajxyz[:, water, :] - trajxyz[:, id, :])**2, axis=1))
+        framenum = 0
+        selectedframes = [] #Stores coordinates of frames
+        for euclidean in framebyframe: #Iterate euclidean distance of waters to IDS in the matrix
+            if euclidean <= around_nanometers:
+                    if wadict.get(water) == None:
+                        wadict[water] = []
+                    selectedframes.append(framenum)
+            framenum=framenum+1
+        wadict[water] = selectedframes
+        if wadict.get(water) != None:
+            if len(wadict[water]) < 20: #Ditch meaningless water.. we assume if the water occupies a site less than 50 frames, is not representative
+                wadict.pop(water)
+    anchordict[id] = wadict
+    #print(anchordict)
+    print(f"##############FINISHED HEAVY-ATOM {id}###############")
 
 
 class WaterMapper:
@@ -378,30 +410,11 @@ class WaterMapper:
                 res = {'filename': trajectory, 'anchor_contacts' : {}, 'important_waters': {}}
                 return res 
 
-            #Calculate euclidean distance from every molecule of water to AtoMID, in every frame.
-            #I do this in a function, so we can enqueue in a process pool of all involved atom ids at the same time - takes around 20 seconds vs 3 minutes one by one
-            def processAtom(id, anchordict):
-                #for id in involved_ids:
-                print(f"Processing AtomID {id}")
-                wadict = {}
-                for water in waters:
-                    framebyframe = np.sqrt(np.sum((traj.xyz[:, water, :] - traj.xyz[:, id, :])**2, axis=1))
-                    framenum = 0
-                    selectedframes = [] #Stores coordinates of frames
-                    for euclidean in framebyframe: #Iterate euclidean distance of waters to IDS in the matrix
-                        if euclidean <= around_nanometers:
-                                if wadict.get(water) == None:
-                                    wadict[water] = []
-                                selectedframes.append(framenum)
-                        framenum=framenum+1
-                    wadict[water] = selectedframes
-                    if wadict.get(water) != None:
-                        if len(wadict[water]) < 20: #Ditch meaningless water.. we assume if the water occupies a site less than 50 frames, is not representative
-                            wadict.pop(water)
-                anchordict[id] = wadict
-                #print(anchordict)
-                print(f"##############FINISHED ATOM {id}###############")
-            
+
+            ##processAtom was here.. I moved outside of the class so windows can spawn it (instead of forking)
+            ##Linux seems to be fine with forking
+
+
             #Launch Processes in Parallel
             manager = Manager() #Create a manager processing pool
             involved_ids = list(set(involved_ids)) #Remove duplicates from atom list
@@ -409,13 +422,13 @@ class WaterMapper:
             #GET ids of Oxygens in water atoms
             waters = traj.topology.select("(water) and (symbol == 'O')")
             waterdict = {}
-            anchordict = manager.dict()
+            anchordict = manager.dict() #Shared proxy object.. we need child forks to propagate back
             jobs    = [] #Process pool
             
             #Create a process per AtomID
             for id in involved_ids:
                 anchordict[id] = {}
-                p = Process(target=processAtom, args=(id, anchordict))
+                p = Process(target=processAtom, args=(id, anchordict, waters, traj.xyz, around_nanometers))
                 jobs.append(p)
                 p.start()
 

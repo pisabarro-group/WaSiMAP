@@ -35,7 +35,7 @@ The tool is designed to facilitate post-processing of MD-based HTP mutational se
 ## Installation
 The installation of WaSiMap is straightforward.
 
-Install directly from PIP:
+Directly from PIP (Make sure to use python >=3.11):
 
 ```bash
 pip install wasimap
@@ -49,7 +49,7 @@ pip install .
 ```
 
 ## Example usage (with test data)
-The following commands download three (3) MD simulations into the current folder (~320 Mb) and perform a WaSiMap analysis on all simulations.
+The following commands download three (3) MD simulations into the current folder (~320 Mb) and perform a WaSiMap analysis on all test simulations.
 
 ```bash
 wasimap --testdata
@@ -104,14 +104,14 @@ A small web server binds to all interfaces (port 8080) upon completion, and the 
 - Interfacial residues involved in water-sites are displayed as "ball+sticks"
 - Molecular backbones are displayed as ribbons
 - An intuitive menu (left panel) allows toggling structures and water-sites on/off
-- The stage can be conveniently navigated with the mouse (see NGL documentation)
+- The stage can be conveniently navigated with the mouse (see [NGL Viewer](https://github.com/nglviewer/ngl) documentation)
 - Clicking on a water-site sphere shows the water-site table for the given structure.
 - The table displays one water-site per row, and also its resident waters.
-- Each water shows its internal AtomID
-- Hovering the mouse over waters highlights its occurence around other residues.
+- Resident waters at each water-site are shown as ovals, each containing its AtomID.
+- For convenience, hovering the mouse over waters highlights its occurence nearby other residues.
 
 ## Citation
-If you use this software in academic work, please cite us.
+If you use this software in academic work, please cite our work.
 (DOI PENDING)
 
 ## Contributing
@@ -119,6 +119,7 @@ Contributions, bug reports, and feature requests are welcome.
 Please open an issue or submit a pull request.
 
 ## Dependencies
+The tool should run on windows and linux (x86 arch).
 
 WaSiMap makes use of these great open-source projects:
 
