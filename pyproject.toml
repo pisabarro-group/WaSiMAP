@@ -1,0 +1,54 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "wasimap"
+version = "0.1.4"
+description = "A Python tool for identifying and mapping persistent water-sites from molecular dynamics (MD) simulations of biomolecular complexes"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+authors = [
+  { name = "Pedro M. Guillem-Gloria", email = "pedro_manuel.guillem_gloria@tu-dresden.de" }
+]
+keywords = ["molecular-dynamics", "water-site-mapping", "bioinformatics"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "License :: OSI Approved :: GNU Lesser General Public License v2 or later (LGPLv2+)",
+  "Operating System :: OS Independent"
+]
+
+dependencies = [
+  "numpy>=2.2.3",
+  "mdtraj>=1.10.3"
+]
+
+[project.scripts]
+wasimap = "wasimap.cli:main"
+
+[tool.hatch.build.targets.wheel]
+only-include = ["src/wasimap"]
+
+[tool.hatch.build.targets.wheel.sources]
+"src" = ""
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "/src",
+  "/README.md",
+  "/LICENSE",
+  "/pyproject.toml"
+]
+
+[tool.hatch.build]
+exclude = [
+  "**/__pycache__/**",
+  "**/*.pyc",
+  "**/*.pyo",
+  "**/*.pyd",
+  "**/.DS_Store",
+  "**/*.tmp",
+  "**/*.bak"
+]

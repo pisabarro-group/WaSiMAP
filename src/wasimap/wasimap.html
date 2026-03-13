@@ -1,0 +1,597 @@
+<!doctype html>
+<html lang="en">
+<!-- 
+File: wasimap.html
+Purpose: WaSiMap Viewer 
+
+This file contains the interactive viewer. It should be served from
+the running application after processing. At the current stage, the
+loader can process 11 trajectories at the same time.
+
+If you would like to remove this limit, refer to line 
+
+Pedro Manuel Guilem Gloria (2026)
+Pisabarro Group
+Structural Bioinformatics, BIOTEC
+TU Dresden
+-->
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>WaSiMap Viewer</title>
+
+    <!-- Bootstrap CSS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+        integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous" />
+
+    <style>
+        html,
+        body {
+            height: 100%;
+        }
+
+        #viewport {
+            width: 100%;
+            height: 70vh;
+            background: #111;
+            border-radius: 12px;
+        }
+
+        .footer {
+            position: absolute;
+            bottom: 0;
+            width: 100%;
+            height: 60px;
+            /* Set the fixed height of the footer here */
+            line-height: 60px;
+            /* Vertically center the text there */
+            background-color: #f5f5f5;
+        }
+
+        .color-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 6px;
+        }
+
+          .water-id-badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-width: 42px;
+            height: 42px;
+            padding: 0 10px;
+            border: 2px solid #dc3545;
+            border-radius: 999px;
+            background-color: #fff;
+            color: #dc3545;
+            font-size: 0.9rem;
+            font-weight: 600;
+            line-height: 1;
+            cursor: default;
+            transition: all 0.15s ease-in-out;
+            user-select: none;
+        }
+
+        .water-id-badge:hover,
+        .water-id-badge-hover {
+            background-color: #dc3545;
+            color: #fff;
+        }
+    </style>
+</head>
+
+
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"
+    integrity="sha256-/JqT3SQfawRcv/BIHPThkBvs0OEvtFFmqPF/lYI/Cxo=" crossorigin="anonymous">
+    </script>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
+    integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous">
+    </script>
+
+<!-- NGL Viewer -->
+<script src="https://unpkg.com/ngl@latest/dist/ngl.js"></script>
+
+
+<body>
+    <div class="container-fluid vh-100">
+        <div class="d-flex align-items-center justify-content-between px-3 py-2 border-bottom" style="background-color:#f5f5f5;">
+         <h1 class="h4 m-0">WaSiMap Viewer</h1>
+        </div>
+        <div class="row h-100">
+            <div class="col-2 border-end bg-light p-2">
+                <br>
+                <h5 class="mb-3">Structure navigation</h5>
+                <div class="list-group" id="structurelist">
+
+                </div>
+            </div>
+            <div class="col-10 p-0">
+                <div id="mutantviewer" class="w-100 h-100 position-relative">
+                    <div id="viewer4loading" class="position-absolute top-50 start-50 translate-middle text-center">
+                        <div class="spinner-border mb-2" role="status"></div>
+                        <div>
+                            <h5>Loading Structures</h5>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <footer class="footer">
+        <div class="container">
+            <span class="text-muted">Pedro Manuel Guillem-Gloria (2026) |||| Pisabarro Group. Structural Bioinformatics. BIOTEC. TU Dresden, Germany || </span>
+        </div>
+    </footer>
+
+
+
+    <script>
+
+        //Path to data
+        pathdata = "./"
+        let wasimap = ""
+        
+        //NGL Component Objects
+        let mutantID = 0;
+        let viewer;
+        let trajectories;
+        let structure;
+        let stage;
+        let setspin = true;
+        let molStructure;
+        let wildtype;
+        let receptorresidues;
+        let seleres;
+        // Object to store groups by numeric index
+        var groupsNGL = {};
+        groupsNGL[1] = {};
+        var waterdisplay = {};
+        var watersite_data = {};
+
+        var color = [
+            '',
+            '#898989', //grey    
+            '#3cb44b', //green
+            '#ffe119', //yellow
+            '#4363d8', //blue
+            '#f58231', //orange
+            '#911eb4', //Purple
+            '#42d4f4', //Cyan
+            '#f032e6', //magenta
+            '#bfef45', //Lime
+            '#808000', //Olive
+            '#dcbeff', //Lavender
+        ]
+
+        //const waterSiteModalEl = document.getElementById('waterSiteModal')
+        //const waterSiteModal = new bootstrap.Modal(waterSiteModalEl)
+
+        struct = `
+        <div class="list-group-item d-flex flex-column">
+            <div class="d-flex justify-content-between align-items-center flex-nowrap">
+                <span class="color-dot" style="background-color: COLORID;"></span>
+                <span class="text-truncate me-2">Structure MUTANTID</span>
+                <div class="d-flex flex-nowrap">
+                    <button id="watmutant_MUTANTID"
+                    class="btn btn-primary rounded-circle d-flex align-items-center justify-content-center"
+                    style="width:34px;height:34px;padding:0;" onclick="toggleWAT(MUTANTID)">WAT</button>
+
+                    <span>&nbsp;</span>
+
+                    <button id="strmutant_MUTANTID"
+                    class="btn btn-success rounded-circle d-flex align-items-center justify-content-center me-1"
+                    style="width:34px;height:34px;padding:0;" onclick="toggleSTR(MUTANTID)">STR</button>
+                </div>
+            </div>
+            <small class="text-muted mt-1">FILENAME</small>
+        </div>
+        `;
+
+        watersiterow = `
+            <tr class="">
+                <td class="text-center align-middle"><strong>SITEID</strong></td>
+                <td class="text-center align-middle">RESIDUE</td>
+                <td class="text-center align-middle">TOTALWATERS</td>
+                <td>
+                  <div class="d-flex flex-wrap">
+                    WATERATOMS
+                  </div>
+                </td>
+                <td class="text-center align-middle">RESIDENCE%</td>
+              </tr>
+        `;
+
+        singlewater = `<span class="water-id-badge WATCLA" data-bs-toggle="tooltip" title="Residence: RESID%">WATID</span>`;
+
+        //ON DOCUMENT LOAD, EXECUTE VIEWER ADD FUNCTIONS
+        $(document).ready(async function () {
+            const can = $("#mutantviewer");
+
+            const r = await fetch("wasimap.json");
+            const wasimap = await r.json();
+
+            for (const [name, waterdata] of Object.entries(wasimap.simulations)) {
+                console.log("Opening structure:", name);
+                mutantID = mutantID + 1
+                await loadNGLViewer(can, waterdata, name, mutantID);
+            }
+        });
+
+        //Convert HEX to RGBA
+        function hexToRgbA(hex, opacity) {
+            var c;
+            if (/^#([A-Fa-f0-9]{3}){1,2}$/.test(hex)) {
+                c = hex.substring(1).split('');
+                if (c.length == 3) {
+                    c = [c[0], c[0], c[1], c[1], c[2], c[2]];
+                }
+                c = '0x' + c.join('');
+                return 'rgba(' + [(c >> 16) & 255, (c >> 8) & 255, c & 255].join(',') + ',' + opacity + ')';
+            }
+            throw new Error('Bad Hex');
+        }
+
+
+        //MAIN NGL VIEWER
+        async function loadNGLViewer(canvas, watersites, mutantName, mutantID) {
+
+            return new Promise((resolve, reject) => {
+
+                console.log("Current mutantID")
+                pdbtextf = watersites["filename"]
+                mutantIDname = mutantName
+              
+
+                //var stringBlob = new Blob( [ pdb ], { type: 'text/plain'} );
+
+                //If this is the first object in the canvas, create the stage
+                if (stage === undefined) {
+                    stage = new NGL.Stage(canvas.attr("id"));
+                    stage.setParameters({ backgroundColor: "white" })
+                    // stage.setSpin(setspin);
+                }
+
+                //Load PDB info stage
+                stage.loadFile(pdbtextf, { ext: "pdb", defaultRepresentation: false, name: mutantIDname }).then(function (o) {
+                    // Group 1: Molecule 1, its representations, and spheres
+                    groupsNGL[mutantID] = {};  // Create group 1 at index 0
+                    groupsNGL[mutantID].molecule = o;  // PDB molecule 1
+                    groupsNGL[mutantID].sphereRep = [];
+                    groupsNGL[mutantID].contactsRep = [];
+                    var duration = 1000;
+
+
+                    //////////////////////////////////ADD WATER SITES/////////////////////////////
+                    var spherePositions1 = []
+                    //Check If Wasimap found any water sites, and iterate them to build each site
+                    sites = 0
+                    waterdisplay[mutantID] = {}
+                    watersite_data[mutantID] = {}
+                    resnums = []
+
+                    if (Object.keys(watersites["anchor_contacts"]).length > 0) {
+                        Object.entries(watersites["anchor_contacts"]).forEach(function ([atomid, watersite]) { //atomid is the residue, not the water
+                            //Vars for the site to display
+
+                            if (watersite["watersite_centroid"] != undefined) { //If project has centroids calculated (needs new scavengeer)
+
+                                //Limit display options to threshold
+                                painted = []
+                                if (atomid != undefined) {
+                                    //console.log(atomid)
+                                    accum_residence = 0
+                                    label1 = ""
+                                    residue_name = watersite["residue"] //Atom at the residue near water
+                                    tmp = parseInt(residue_name.match(/\d+/)[0]);//obtain residue position //obtain residue position
+                                    console.log("Residue " + tmp + " has resident waters nearby")
+                                    resnums.push(tmp)
+                                    involved_waters = watersite["waters"] //Actual water ids in the site
+                                    centroid = watersite["watersite_centroid"] //Coordinate to show (centroid of waters at the site)
+                                    addthisone = false
+
+                                    waterdisplay[mutantID][residue_name] = {}
+                                    waterdisplay[mutantID][residue_name]["waters"] = []
+                                    waterdisplay[mutantID][residue_name]["residence"] = []
+                                    waterdisplay[mutantID]['sites_detail'] = []
+                                    waterdisplay[mutantID]['sites'] = 0
+
+                                    involved_waters.forEach(function (watid) {
+                                        if (!painted.includes(watid)) {
+                                            watpercent = watersites["important_waters"][watid]["residence_percentage"] //For labeling
+                                            watres = watersites["important_waters"][watid]["residue"] //For future display
+                                            watframes = watersites["important_waters"][watid]["frames"] //For future display
+                                            if (watpercent >= 5) { //Only grab waters better than 5% residence
+                                                accum_residence += watpercent
+                                                painted.push(watid)
+                                                addthisone = true
+
+                                                waterdisplay[mutantID][residue_name]["waters"].push(watid)
+                                                waterdisplay[mutantID][residue_name]["residence"].push(watersites["important_waters"][watid]["residence_percentage"])
+                                            }
+                                        }
+                                    })
+
+                                    if (addthisone && accum_residence > 5) { //Limit residence to 5% (all waters) and upper
+                                        //console.log(involved_waters)
+                                        if (accum_residence > 100){
+                                            accum_residence = 100
+                                        } 
+                                        sites += 1
+                                        //console.log(label1+" "+accum_residence)
+                                        spherePositions1.push({ position: centroid, label: `Site ${sites} (${accum_residence}%)`, resident: accum_residence, siteid: sites })
+                                        if (typeof watersite_data[mutantID][sites] === "undefined") {
+                                            watersite_data[mutantID][sites] = []
+                                        }
+                                        
+                                        watersite_data[mutantID][sites].push({siteid: sites, resident_percentage: accum_residence, residue_around: residue_name })
+                                        
+                                    }
+                                    waterdisplay[mutantID]['sites'] = sites
+                                    
+
+                                }
+                            }
+
+                            // Create spheres for group 1
+                        });
+                    }
+
+                    //Define list of residues involved in water contacts
+                    seleres = ""
+                    resnums = [...new Set(resnums)];
+                    seleres = resnums.join(" or ");
+
+                    //////////////////////Add representations for molecule 1 (group 1)////////////////////////////// 
+                    selballs = "(" + seleres + ") and not hydrogen"
+                    console.log(selballs)
+                    if (mutantID === 1) {
+                        groupsNGL[mutantID].molecule.addRepresentation("cartoon", { sele: "all and (not hydrogen)", color: color[mutantID], pickable: true, opacity: 0.2 });
+                        groupsNGL[mutantID].molecule.addRepresentation("ball+stick", { sele: selballs, pickable: true });
+                        //groupsNGL[mutantID].molecule.addRepresentation("contact", {sele: "("+seleres+")", pickable: true, radius: 0.5, maxDistance: 3.5, piStacking: true, color: "#5579bbff"})   
+                        groupsNGL[mutantID].molecule.addRepresentation('label', {
+                            // pick one anchor atom per residue: CB (or CA for GLY which has n CB)
+                            sele: 'protein and (name CA)',
+                            labelType: 'text',
+                            labelText: ap => `${ap.resname}${ap.resno}${ap.chainname ? ':' + ap.chainname : ''}`,
+                            color: 'black',
+                            attachment: 'middle-right',  // nudge relative to anchor atom
+                            xOffset: 0,
+                            yOffset: 0,
+                            zOffset: 1.5,                // lift the label off the surface a bit
+                            useScreen: true              // keep constant screen size
+                        });
+                        groupsNGL[mutantID].molecule.autoView(duration, seleres);
+                    } else {
+                        groupsNGL[mutantID].molecule.addRepresentation("ribbon", { sele: "all and (not hydrogen)", color: color[mutantID], opacity: 0.5, pickable: true });
+                        groupsNGL[mutantID].molecule.addRepresentation("ball+stick", { sele: selballs, color: "element", colorValue: color[mutantID], pickable: true }) //Pedro change rep Aug 1 2024
+                    }
+
+                    //////////////////////////////////////////////////////////////////////////////
+
+                    spherePositions1.forEach(function (item) {
+                        var shape = new NGL.Shape('highlight');
+                        col = hexToRgbA(color[mutantID], 1.0).match(/\d+/g).slice(0, 3).map(num => parseInt(num) / 255)
+                        shape.addSphere(item.position, col, 2.5 * (item.resident / 100), "Water " + item.label + " (Structure " + mutantID + ")");
+                        shape.addText(item.position, [0, 0, 0], 1, item.label, col);
+                        var shapecomp = stage.addComponentFromObject(shape);
+                        //Add data for click actions
+                        shapecomp._clickData = {
+                            mutantID: mutantID, //Trajectory ID
+                            label: item.label,
+                            siteid: item.siteid, // Site ID
+                        };
+
+                        var sphereRepresentation = shapecomp.addRepresentation('buffer', {
+                            opacity: 0.5,
+                            side: 'double',
+                            wireframe: false,
+                            label: "test"
+                        });
+                        //console.log(sphereRepresentation)
+                        groupsNGL[mutantID].sphereRep.push(sphereRepresentation);  // Store sphere representations for group 1
+                    });
+
+                    //Define Superposing Reference
+                    if (canvas.attr('id') == "mutantviewer") {
+                        $("#viewer4loading").remove();
+                        //Add buttons to handle this mutant
+                        //console.log("AA");
+                        setTimeout(function () { $('#staticBackdrop').modal('hide') }, 100);
+                    }
+
+
+                    function transformCoordinates(spherePositions, matrix) {
+                        return spherePositions.map(pos => {
+                            let v = new NGL.Vector3(pos[0], pos[1], pos[2]);  // Convert to NGL vector
+                            v.applyMatrix4(matrix);  // Apply the transformation matrix
+                            return [v.x, v.y, v.z];  // Return transformed coordinates
+                        });
+                    }
+
+                    function addSpheres(spherePositions) {
+                        var shape = new NGL.Shape('highlight');
+
+                        spherePositions.forEach(pos => {
+                            shape.addSphere(pos, [1, 0, 0], 1.0, 'sphere');  // Add red spheres
+                        });
+
+                        if (shapeComp) {
+                            stage.removeComponent(shapeComp);  // Remove previous spheres
+                        }
+
+                        shapeComp = stage.addComponentFromObject(shape);
+                        shapeComp.addRepresentation('buffer', { opacity: 0.5 });
+                    }
+
+                    //Superpose trajectories
+                    if (mutantID !== 1) {
+                        //add rest of trajectories superposed
+                        groupsNGL[mutantID].molecule.superpose(groupsNGL[1].molecule, false, "protein and name CA")
+                    } else {
+                        //Register the signal for sphere click only once, when stage exists for the first time
+                        stage.signals.clicked.add(function (pickingProxy) {
+                            if (!pickingProxy || !pickingProxy.component) return;
+
+                            let data = pickingProxy.component._clickData;
+                            if (!data) return;
+
+                            mySphereCallback(data.mutantID, data.label, data.siteid);
+                        });
+                    }
+
+                })
+
+                //Add element to list of structures
+                html = struct.replace(/MUTANTID/g, mutantID);
+                html = html.replace(/COLORID/g, color[mutantID]);
+                html = html.replace(/FILENAME/g, pdbtextf);
+                $("#structurelist").append(html)
+
+                box = canvas.width();
+                canvas.css({ "width:": box + "px", "height": box + "px", "overflow": "" });
+                stage.handleResize();
+
+                molStructure = stage
+                resolve(true);
+            });
+        }
+
+        //Handle Water site click - Display details
+        function mySphereCallback(trajectoryNumber, label, siteid) {
+            console.log("sphere clicked:", trajectoryNumber, label);
+            const modalTitle = document.getElementById('waterSiteModalLabel')
+            modalTitle.textContent = `Structure ${trajectoryNumber} - Watersite detail`
+
+            modalElement = document.getElementById('waterSiteModal')
+            modal = new bootstrap.Modal(modalElement)
+            //Fill modal table with water site content
+            
+            data = "";
+            $("#sitecontents").html("")
+            Object.keys(watersite_data[trajectoryNumber]).forEach(function (key) {
+               data = watersite_data[trajectoryNumber][key][0];
+               res = data["residue_around"];
+               iter = 0
+               watinfo = "";
+               waterdisplay[trajectoryNumber][res]["waters"].forEach(function (wat){
+                    watelem = singlewater.replace(/RESID/g, waterdisplay[trajectoryNumber][res]["residence"][iter]);
+                    watelem = watelem.replace(/WATID/g, wat);
+                    watelem = watelem.replace(/WATCLA/g, "wat_"+wat);
+                    
+                    iter++
+                    watinfo += watelem;
+               })
+               
+               row = watersiterow.replace(/SITEID/g, data["siteid"]);
+               //make the clicked sphere green on the table
+               if(data["siteid"] == siteid){
+                console.log("painting")                
+                  row = row.replace(/class=""/g, 'class="table-success"');  
+               }
+               row = row.replace(/RESIDUE/g, res);
+               row = row.replace(/TOTALWATERS/g, waterdisplay[trajectoryNumber][res]["waters"].length);
+               row = row.replace(/WATERATOMS/g, watinfo);
+               row = row.replace(/RESIDENCE/g, data["resident_percentage"]);   
+               $("#sitecontents").append(row)
+            })
+            ///////////////////////////////////////////
+
+            //Shwo modal box
+            modal.show()
+
+            modalElement.addEventListener('hidden.bs.modal', function () {
+                document.querySelectorAll('.modal-backdrop').forEach(el => el.remove())
+                document.body.classList.remove('modal-open')
+                document.body.style.removeProperty('padding-right')
+                document.body.style.removeProperty('overflow')
+            })
+
+            const tooltipTriggerList = [].slice.call(
+                modalElement.querySelectorAll('[data-bs-toggle="tooltip"]')
+            )
+            tooltipTriggerList.forEach(el => new bootstrap.Tooltip(el))
+        }
+
+        //Small listeners to hadle button hovers
+        $(document).on('mouseenter', '.water-id-badge', function () {
+            let watClass = [...this.classList].find(c => c.startsWith('wat_'))
+            if (watClass) {
+                $('.' + watClass).addClass('water-id-badge-hover')
+            }
+        })
+
+        $(document).on('mouseleave', '.water-id-badge', function () {
+            let watClass = [...this.classList].find(c => c.startsWith('wat_'))
+            if (watClass) {
+                $('.' + watClass).removeClass('water-id-badge-hover')
+            }
+        })
+        ////////////////////////////////////////////
+
+        //Toggle water spheres
+        function toggleWAT(id) {
+            idelem = "#watmutant_" + id;
+            $(idelem).hasClass("btn-primary") ? $(idelem).removeClass("btn-primary").addClass("btn-outline-primary") : $(idelem).removeClass("btn-outline-primary").addClass("btn-primary");
+
+            Object.keys(groupsNGL[id].sphereRep).forEach(function (key) {
+                var site = groupsNGL[id].sphereRep[key];
+                currentVisibility = site.visible;
+                groupsNGL[id].sphereRep[key].setVisibility(!currentVisibility)
+            });
+
+        }
+
+        //Toggle structures
+        function toggleSTR(id) {
+            idelem = "#strmutant_" + id;
+            $(idelem).hasClass("btn-success") ? $(idelem).removeClass("btn-success").addClass("btn-outline-success") : $(idelem).removeClass("btn-outline-success").addClass("btn-success");
+            var currentVisibility = groupsNGL[id].molecule.visible;
+            groupsNGL[id].molecule.setVisibility(!currentVisibility);
+        }
+
+
+    </script>
+</body>
+ 
+
+<!-- Modal -->
+<div class="modal fade" id="waterSiteModal" tabindex="-1" aria-labelledby="waterSiteModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="waterSiteModalLabel">Title</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+
+      <div class="modal-body">
+        <div class="table-responsive">
+          <table class="table table-sm table-bordered table-hover align-middle mb-0">
+            <thead class="table-light">
+              <tr>
+                <th style="width: 5%;"  class="text-center">SiteID</th>
+                <th style="width: 10%;" class="text-center">Near Atom</th>
+                <th style="width: 10%;" class="text-center">Total waters</th>
+                <th style="width: 65%;">Resident Water IDs</th>
+                <th style="width: 10%;" class="text-center">Residence</th>
+              </tr>
+            </thead>
+            <tbody id="sitecontents">
+              
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+</html>
