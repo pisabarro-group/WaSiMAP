@@ -6,7 +6,7 @@ Purpose: WaSiMap Viewer
 
 This file contains the interactive viewer. It should be served from
 the running application after processing. At the current stage, the
-loader can process 11 trajectories at the same time.
+loader can process a11 trajectories at the same time.
 
 If you would like to remove this limit, refer to line 
 
@@ -305,14 +305,14 @@ TU Dresden
                                             watpercent = watersites["important_waters"][watid]["residence_percentage"] //For labeling
                                             watres = watersites["important_waters"][watid]["residue"] //For future display
                                             watframes = watersites["important_waters"][watid]["frames"] //For future display
-                                            if (watpercent >= 5) { //Only grab waters better than 5% residence
+                                            //if (watpercent >= 5) { //Only grab waters better than 5% residence
                                                 accum_residence += watpercent
                                                 painted.push(watid)
                                                 addthisone = true
 
                                                 waterdisplay[mutantID][residue_name]["waters"].push(watid)
                                                 waterdisplay[mutantID][residue_name]["residence"].push(watersites["important_waters"][watid]["residence_percentage"])
-                                            }
+                                            //}
                                         }
                                     })
 

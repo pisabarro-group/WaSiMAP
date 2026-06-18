@@ -1,6 +1,6 @@
 # WaSiMap
 
-**WaSiMap** is a Python tool for identifying and mapping persistent water-sites from molecular dynamics (MD) simulations of biomolecular complexes.
+**WaSiMap** is a Python tool for identifying persistent water-sites from molecular dynamics (MD) simulations of biomolecular complexes.
 
 The software detects regions where solvent molecules repeatedly occupy similar spatial positions across simulation frames and clusters them into **water-sites**, enabling comparative analysis across multiple simulations.
 

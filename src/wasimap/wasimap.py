@@ -26,6 +26,67 @@ TRAJECTORY_EXTS = {".xtc", ".trr", ".dcd", ".nc", ".h5", ".hdf5", ".lh5", ".binp
 TOPOLOGY_EXTS   = {".pdb", ".gro", ".prmtop", ".parm7", ".psf", ".top"}
 H5_LIKE         = {".h5", ".hdf5", ".lh5"}
 
+HBOND_ATOMS = {"O", "N", "S"} #Atoms usually mediating hbonding.. Sulfur is weak.. all others are negligible
+
+#For future use - Handle solvents other than just water
+SOLVENTS = {
+    # --- Water ---
+    "HOH", "WAT", "SOL", "TIP3", "TIP3P", "TIP4P", "TIP4", "SPC", "SPCE", "OPC3", "OPC", "TIP5"
+
+    # --- Simple alcohols ---
+    "MET", "MEOH", "METHANOL",
+    "ETH", "EOH", "ETOH", "ETHANOL",
+    "PRO", "IPR", "IPRO", "ISOPROPANOL",
+    "BUT", "BUOH", "TBU", "TBA", "TERTBUTANOL",
+
+    # --- Halogenated solvents ---
+    "CL3", "CHCL3", "CHL", "CHCL", "CHLOROFORM",
+    "DCM", "CH2CL2", "DICHLOROMETHANE",
+    "DCE", "CH2CLCH2CL", "DICHLOROETHANE",
+    "TCE", "TRICHLOROETHANE",
+    "CTC", "CCl4", "CARBON_TETRACHLORIDE",
+
+    # --- Aprotic polar solvents ---
+    "DMS", "DMSO",
+    "DMF",
+    "DMA", "DMAC",
+    "ACN", "CH3CN", "ACETONITRILE",
+    "ACE", "ACETONE",
+    "NMP",
+
+    # --- Ethers ---
+    "THF",
+    "DIOX", "DIOXANE",
+    "DEE", "DIETHYLETHER", "ETHER",
+    "MTBE",
+
+    # --- Aromatic solvents ---
+    "BEN", "BENZENE",
+    "TOL", "TOLUENE",
+    "XYL", "XYLENE",
+
+    # --- Alkanes ---
+    "HEX", "HEXANE",
+    "HEP", "HEPTANE",
+    "OCT", "OCTANE",
+    "NON", "NONANE",
+    "DEC", "DECANE",
+    "CYC", "CYCLOHEXANE",
+
+    # --- Misc common ---
+    "GLY", "GLYCOL", "ETHYLENEGLYCOL",
+    "PG", "PROPYLENEGLYCOL",
+    "UREA",
+    "FORM", "FORMAMIDE",
+
+    # --- Cryo / crystallography additives ---
+    "PEG", "PEG400", "PEG3350",
+    "MPD",
+    "GOL", "GLC", "GLYCEROL",
+    "SO4", "PO4",  # sometimes behave like solvent-like species
+}
+
+
 # This class extends SimpleHTTPRequestHandler, it 
 # overrides end_headers to force no cache, and log_message() 
 # to dump web server events to stdout
@@ -86,7 +147,7 @@ class WaterMapper:
     #Constructor... Watch out.. distance threshold comes in nanometers, not angstroms
     def __init__(self, distance_threshold=0.35, persistence=5, gui=False, onlygui=False, inputs=None, testdata=False, output_folder="./wasimap_outputs",):
         #Assign Variables
-        self.around_nanometers  = distance_threshold #In angstroms
+        self.around_nanometers  = distance_threshold #In nanometers
         self.relevance          = persistence/100 #in percentage (int)
         self.path               = "./"
         self.gui                = gui
@@ -192,17 +253,21 @@ class WaterMapper:
 
 
         #Ask user for desired interfacial positions to watch (common to all trajectories)
-        positions_raw = input("Add amino acid positions to include in the analysis (comma-separated, Enter to skip): ").strip()
-        positions = (
-            [int(p) for p in positions_raw.split(",") if p.strip()]
-            if positions_raw
-            else []
-        )
+        positions_raw = input("Manual residue number or range to include (example: 1-6 or 1,2,3,N) (Press Enter to auto-detect): ").strip()
+        positions = [
+            i
+            for part in positions_raw.split(",")
+                for i in (
+                    range(int(part.split("-", 1)[0]), int(part.split("-", 1)[1]) + 1)
+                    if "-" in part
+                    else [int(part)]
+                )
+        ] if positions_raw else []
 
 
         #Ask user if the entire complex is in a single chain
         last_residue_raw = input(
-            "Enter the last residue number of the first molecule (Enter to auto-detect): "
+            "If known, provide the last residue number of the first molecule (Press Enter to auto-detect): "
         ).strip()
 
         if last_residue_raw == "":
@@ -372,7 +437,7 @@ class WaterMapper:
               #Select heavy atoms of position
               ap = traj.topology.select(f"(resid {res}) and ((symbol == 'O') or (symbol == 'N') or (symbol == 'S'))")
               for addi in ap:
-                print(f"adding {addi}")
+                print(f"Adding user-defined position {addi}")
                 involved_ids.append(addi)
 
             if len(involved_ids) > 0:
@@ -384,13 +449,13 @@ class WaterMapper:
             #This is only necesary if the user didn't provide the position of the last residue of a simulation with all residues incrementally in a single chain
             if last_residue is None:
                 last_residue = self.find_first_molecule_end_by_peptide_break(traj, 2.0)
-                print(f"First molecule ends at residue.index {last_residue}")
+                print(f"First molecule ends at residue.index {last_residue} or position {int(last_residue)+1}")
 
             # BAKER HUBBARD HBOND FORMING ATOMS.. WE ARE INTERESTED IN THESE
             print(f"Finding atoms that form intermolecular Hbonds")
             hbonds = md.baker_hubbard(traj, periodic=True, sidechain_only=False, freq=self.relevance)
 
-            print(f"Found {len(hbonds)} hbonds with Baker-Hubbard method.. adding")
+            print(f"Found {len(hbonds)} hbonds with Baker-Hubbard method.. scanning heavy-atoms")
             for hbond in hbonds:
                 #BUILD ATOM COLLECTION
                 atom1 = traj.topology.atom(hbond[0])
@@ -402,11 +467,12 @@ class WaterMapper:
                 else:
                     involved_ids.append(hbond[0])
                     involved_ids.append(hbond[2])
+                    print(f"Adding atoms {hbond[0]} and {hbond[2]}")
 
             print(f"Added heavy atoms that form inter-molecular Hbonds")
 
             if len(involved_ids) == 0:
-                print(f"No heavy atoms detected for analysis. Provide a list manually")
+                print(f"No heavy atoms detected for analysis :/.. Are your molecules too far appart?. Provide a residue list manually")
                 res = {'filename': trajectory, 'anchor_contacts' : {}, 'important_waters': {}}
                 return res 
 
@@ -419,8 +485,20 @@ class WaterMapper:
             manager = Manager() #Create a manager processing pool
             involved_ids = list(set(involved_ids)) #Remove duplicates from atom list
             print(f"Involved AtomIDs {involved_ids}")
+
+            
+            #We could build selectors here to work with any type of solvent (chloroform, etc)
+            #And get atomic IDs with hbonding potential, including water oxygens for dynamics with 2 or more solvents + water
+
+            #mask = (
+            #    "(" + " or ".join(f"resname {r}" for r in sorted(SOLVENTS)) + ") and "
+            #    "(" + " or ".join(f"symbol {e}" for e in sorted(HBOND_ATOMS)) + ")"
+            #)
+
             #GET ids of Oxygens in water atoms
-            waters = traj.topology.select("(water) and (symbol == 'O')")
+            mask   = "(water) and (symbol == 'O')" #only water for now
+            waters = traj.topology.select(mask) #only water for now
+            
             waterdict = {}
             anchordict = manager.dict() #Shared proxy object.. we need child forks to propagate back
             jobs    = [] #Process pool

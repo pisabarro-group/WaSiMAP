@@ -5,14 +5,14 @@ build-backend = "hatchling.build"
 [project]
 name = "wasimap"
 version = "0.1.5"
-description = "A Python tool for identifying and mapping water-sites from MD-based HTP mutational series"
+description = "A Python tool for identifying water-sites from MD-based HTP mutational series"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { file = "LICENSE" }
 authors = [
   { name = "Pedro M. Guillem-Gloria", email = "pedro_manuel.guillem_gloria@tu-dresden.de" }
 ]
-keywords = ["molecular-dynamics", "water-site-mapping", "bioinformatics"]
+keywords = ["molecular-dynamics", "water-site-identification", "bioinformatics"]
 classifiers = [
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.11",
