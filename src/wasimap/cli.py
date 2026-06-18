@@ -67,7 +67,27 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--testdata",
         action="store_true",
-        help="Download MD test data to local dir (approx. 320MB)",
+        help="Download light MD test data to local dir (approx. 320MB)",
+    )
+    
+    parser.add_argument(
+        "--testdata2",
+        action="store_true",
+        help="Download thorough MD test data to local dir (approx. 4.8GB)",
+    )
+
+    parser.add_argument(
+        "--min-residence-ps",
+        type=float,
+        default=50.0,
+        dest="min_residence_ps",
+        help=(
+            "Minimum accumulated time (in picoseconds) a water must remain near "
+            "an anchor atom to be considered resident, rather than transient noise. "
+            "This floor is expressed in physical time rather than a frame count, "
+            "so it has the same meaning regardless of trajectory frame spacing "
+            "(default: 50.0 ps)."
+        ),
     )
 
 
@@ -91,6 +111,8 @@ def main(argv: list[str] | None = None) -> int:
             onlygui=args.onlygui,
             inputs=args.inputs,
             testdata=args.testdata,
+            testdata2=args.testdata2,
+            min_residence_ps=args.min_residence_ps,
         )
         #Run main application
         wm.run()

@@ -112,8 +112,12 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
 # waters:     IDs of every water oxygen in the trajectory
 # trajxyz:    XYZ numpy array of traj object (passing the entire traj would eat up the memory)
 # around_nanometers: cuttoff distance
+# min_residence_frames: minimum number of frames a water must be near the anchor
+#                        to be considered resident (rather than transient noise).
+#                        Computed by the caller from a fixed time floor so its 
+#                        physical meaning (e.g. 50 ps) stays constant regardless of frame spacing.
 #
-def processAtom(id, anchordict, waters, trajxyz, around_nanometers):
+def processAtom(id, anchordict, waters, trajxyz, around_nanometers, min_residence_frames):
     #for id in involved_ids:
     print(f"Processing AtomID {id}")
     wadict = {}
@@ -130,7 +134,10 @@ def processAtom(id, anchordict, waters, trajxyz, around_nanometers):
             framenum=framenum+1
         wadict[water] = selectedframes
         if wadict.get(water) != None:
-            if len(wadict[water]) < 20: #Ditch meaningless water.. we assume if the water occupies a site less than 50 frames, is not representative
+            # Ditch transient/noise waters. 
+            # derived from a fixed time floor (WaterMapper.min_residence_ps) so this
+            # filter means the same physical thing regardless of report_interval.
+            if len(wadict[water]) < min_residence_frames:
                 wadict.pop(water)
     anchordict[id] = wadict
     #print(anchordict)
@@ -145,22 +152,25 @@ class WaterMapper:
 
     
     #Constructor... Watch out.. distance threshold comes in nanometers, not angstroms
-    def __init__(self, distance_threshold=0.35, persistence=5, gui=False, onlygui=False, inputs=None, testdata=False, output_folder="./wasimap_outputs",):
+    def __init__(self, distance_threshold=0.35, persistence=5, gui=False, onlygui=False, inputs=None, testdata=False, testdata2=False, output_folder="./wasimap_outputs", min_residence_ps=50.0):
         #Assign Variables
         self.around_nanometers  = distance_threshold #In nanometers
         self.relevance          = persistence/100 #in percentage (int)
         self.path               = "./"
         self.gui                = gui
         self.onlygui            = onlygui
-        self.testdata            = testdata
+        self.testdata           = testdata
+        self.testdata2          = testdata2        
         self.output_folder      = output_folder
         self.inputs             = inputs or "auto"
         self.md_trajectories    = {}
+        self.min_residence_ps   = min_residence_ps
 
     def run(self) -> None:
         print("Running WaSiMap")
         print(f"  distance_cutoff={self.around_nanometers} nm")
         print(f"  persistence_threshold={self.relevance*100}%")
+        print(f"  min_residence_ps={self.min_residence_ps} ps")
         print(f"  gui={self.gui}")
         print(f"  onlygui={self.onlygui}")
         print(f"  inputs={self.inputs}")
@@ -188,6 +198,40 @@ class WaterMapper:
                 "https://zenodo.org/records/18984212/files/sim2.h5?download=1",
                 "https://zenodo.org/records/18984212/files/sim3.nc?download=1",
                 "https://zenodo.org/records/18984212/files/sim3.prmtop?download=1",
+            ]
+
+            for url in urls:
+                filename = os.path.basename(url.split("?")[0])
+                print(f"Downloading {filename}... from {url}")
+
+                with requests.get(url, stream=True) as r:
+                    r.raise_for_status()
+                    with open(filename, "wb") as f:
+                        for chunk in r.iter_content(chunk_size=8192):
+                            if chunk:
+                                f.write(chunk)
+
+            print("All downloads completed") 
+            print("")
+            print("Now you can run 'wasimap --gui'")      
+            print("")
+            exit(0)
+
+        if(self.testdata2):
+          d = Path(self.output_folder)
+          print("")
+          print("Dense Test data resides at Zenodo, with DOI https://doi.org/10.5281/zenodo.18984212")
+          print("WaSiMap will download 4.8Mb of test MD trajectory data to the current folder")
+          print("")
+          answer = input("Would you like to continue? [y/N]: ").strip().lower()
+          if answer not in ("y", "yes"):
+                print("Aborted by user.")
+                raise SystemExit(0)
+          else:
+            #URL for the 6 files (6 H5 trajectories)
+            urls = [
+                "https://zenodo.org/records/18984212/files/sim1.h5?download=1",
+                "https://zenodo.org/records/18984212/files/sim2.h5?download=1",
             ]
 
             for url in urls:
@@ -285,7 +329,7 @@ class WaterMapper:
         #Create output dictionary structure
         bundle = {
             "simulations": {},   # dict of many sim results
-            "config": {"distance_cutoff": self.around_nanometers, "persistence_threshold": self.relevance*100},        # optional: cutoff, thresholds, etc.
+            "config": {"distance_cutoff": self.around_nanometers, "persistence_threshold": self.relevance*100, "min_residence_ps": self.min_residence_ps},        # optional: cutoff, thresholds, etc.
             "meta": {"generator": "WaSiMap","timestamp": datetime.utcnow().isoformat()},          # optional: timestamps, versions, etc.
         }
 
@@ -425,6 +469,20 @@ class WaterMapper:
             nframes           = traj.n_frames #number of frames in the trajectory
             relevant          = nframes*self.relevance #minimum residence frames to be considered a relevant water
             involved_ids      = []
+
+            # Convert the time-based residence floor into a frame count using this
+            # trajectory's own timestep, so the same physical meaning (e.g. 50 ps)
+            # is preserved regardless of how frames were sampled (2 ps, 5 ps, etc).
+            # traj.timestep is in picoseconds once MDTraj reads it from file metadata.
+            if traj.timestep and traj.timestep > 0:
+                min_residence_frames = max(1, round(self.min_residence_ps / traj.timestep))
+            else:
+                # Fallback if a format doesn't carry timestep metadata: behave like
+                # the old hardcoded default rather than crashing.
+                print("Warning: trajectory has no timestep metadata; falling back to 20-frame minimum residence")
+                min_residence_frames = 20
+
+            print(f"Minimum residence time: {self.min_residence_ps} ps  ->  {min_residence_frames} frames (timestep={traj.timestep} ps)")
             
             #Extract first frame of traj, and save 
             traj.atom_slice(traj.topology.select("not resname HOH and not resname WAT and not resname SOL"))[0].save_pdb(f"{self.output_folder}/wasimap_{trajectory}.pdb")
@@ -506,7 +564,7 @@ class WaterMapper:
             #Create a process per AtomID
             for id in involved_ids:
                 anchordict[id] = {}
-                p = Process(target=processAtom, args=(id, anchordict, waters, traj.xyz, around_nanometers))
+                p = Process(target=processAtom, args=(id, anchordict, waters, traj.xyz, around_nanometers, min_residence_frames))
                 jobs.append(p)
                 p.start()
 
@@ -598,4 +656,4 @@ class WaterMapper:
                 return r_i.index
 
         # No break found: treat as single continuous protein
-        return prot_res[-1].index    
+        return prot_res[-1].index
