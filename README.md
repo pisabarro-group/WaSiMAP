@@ -1,8 +1,8 @@
-# WaSiMap
+# WaSiMAP
 
-**WaSiMap** is a Python tool for identifying and mapping persistent water-sites from molecular dynamics (MD) simulations of biomolecular complexes.
+**WaSiMAP** (Water Site Mining and Analysis Pipeline) is a Python tool for identifying persistent water-sites from molecular dynamics (MD) simulations of biomolecular complexes.
 
-The software detects regions where solvent molecules repeatedly occupy similar spatial positions across simulation frames and clusters them into **water-sites**, enabling comparative analysis across multiple simulations.
+It detects regions where solvent molecules repeatedly occupy similar spatial positions across simulation frames and clusters them into **water-sites**, enabling comparative analysis across closely related simulations.
 
 ---
  
@@ -10,12 +10,12 @@ The software detects regions where solvent molecules repeatedly occupy similar s
 
 Water molecules frequently mediate hydrogen bonding and stabilize interaction patterns that extend beyond direct residue–residue contacts in biomolecular recognition. Identifying solvent-mediated interactions is particularly important in protein–protein and protein–DNA interfaces, where conserved water-sites may contribute to binding specificity and stability.
 
-WaSiMap analyzes explicitly solvated MD simulations to:
+WaSiMAP analyzes explicitly solvated MD simulations to:
 
 - Detect water molecules with increased interfacial persistence 
 - Determine the heavy atoms contacted by these waters 
-- Cluster water positions into spatial **water-site centroids** 
-- Enable visual comparison of water-sites across **many** closely related MD simulations
+- Cluster water positions into **water-site centroids** 
+- Enable visual comparison of water-sites across closely related MD simulations by superposition
 
 The tool is designed to facilitate post-processing of MD-based HTP mutational series, allowing researchers to investigate how solvent-mediated interactions evolve across closely related molecular systems.
 
@@ -33,7 +33,7 @@ The tool is designed to facilitate post-processing of MD-based HTP mutational se
 ---
 
 ## Installation
-The installation of WaSiMap is straightforward.
+The installation of WaSiMAP is straightforward.
 
 Directly from PIP (Make sure to use python >=3.11):
 
@@ -49,20 +49,26 @@ pip install .
 ```
 
 ## Example usage (with test data)
-The following commands download three (3) MD simulations into the current folder (~320 Mb) and perform a WaSiMap analysis on all test simulations.
+The following commands download test data into the current folder and perform a WaSiMAP analysis.
 
+For a fast demostration with small trajectories (320 Mb)
 ```bash
 wasimap --testdata
 wasimap --gui
 ```
 
-Upon completion, the WaSiMap viewer should open automatically in the default browser. Else, manually open http://localhost:8080/wasimap.html
+For longer MD trajectories (15 Gb) use:
+```bash
+wasimap --testdata2
+wasimap --gui
+```
+Upon completion of the pipeline, the WaSiMAP viewer should open automatically in the default browser. Else, manually open http://localhost:8080/wasimap.html
 
 To exit the program, use CTRL-C.
 
 
 ## Basic Usage
-WaSiMap searches for MD trajectory files and their corresponding topology files in the folder where it is executed. Each trajectory must share the same base filename as its topology file. For example, an AMBER simulation named SIM1 should exist as SIM1.mdcrd and SIM1.prmtop. In contrast, H5 trajectories contain topology information as embedded metadata and therefore exist as a single file. WaSiMap automatically attempts to identify and pair trajectory files with their matching topologies.
+WaSiMAP searches for MD trajectory files and their corresponding topology files in the folder where it is executed. Each trajectory must share the same base filename as its topology file. For example, an AMBER simulation named SIM1 should exist as SIM1.mdcrd and SIM1.prmtop. In contrast, H5 trajectories contain topology information as embedded metadata and therefore exist as a single file. WaSiMap automatically attempts to identify and pair trajectory files with their matching topologies.
 
 The program supports MD trajectories readable by [MDTraj](https://github.com/mdtraj/mdtraj), including: .".xtc", ".trr", ".dcd", ".nc", ".h5", ".hdf5", ".lh5", ".binpos" - and also topology formats ".pdb", ".gro", ".prmtop", ".parm7", ".psf", and ".top".
 
@@ -84,16 +90,19 @@ wasimap --gui <<trajectory_filename>> (name only, no extension)
 The command "wasimap" accepts several flags, described as follows:
 ```bash
  -c --cuttoff      H-bonding distance cutoff (default: 0.35 nm)
- -r --persistence  Minimum percentage of frames to consider water as resident (default: 5)
+ -r --persistence  Minimum percentage of frames to consider water as resident in the GUI (default: 5)
+ -m --min-residence-ms Minimum residence time (in picoseconds) for a water to be relevant.
  --gui             Start the WaSiMap explorer after execution
  --onlygui         Do not process anything. Show GUI for existing results.
  --testdata        Download test MD simulations to the current folder
+ --testdata2       Download longer test MD simulations to the current folder
  -h --help         Displays help
  -v --version      Displays current version
+
 ```
 ## Navigating Results
 
-WaSiMap automatically creates a folder called ./wasimap_outputs and stores:
+WaSiMAP automatically creates a folder called ./wasimap_outputs and stores:
 - The 3D structure of the first frame of each trajectory, in PDB format
 - A collection of water-site data, centroids and water ids in file wasimap.json
 - A copy of the HTML viewer wasimap.html
@@ -111,7 +120,7 @@ A small web server binds to all interfaces (port 8080) upon completion, and the 
 - For convenience, hovering the mouse over waters highlights its occurence nearby other residues.
 
 ## Citation
-If you use this software in academic work, please cite our work.
+If you use this software in academic research, please cite our work.
 (DOI PENDING)
 
 ## Contributing
@@ -121,7 +130,7 @@ Please open an issue or submit a pull request.
 ## Dependencies
 The tool should run on windows and linux (x86 arch).
 
-WaSiMap makes use of these great open-source projects:
+WaSiMAP makes use of these great open-source projects:
 
 - [MDTraj](https://github.com/mdtraj/mdtraj) – Trajectory management library
 - [NGL Viewer](https://github.com/nglviewer/ngl) – Molecular visualization
