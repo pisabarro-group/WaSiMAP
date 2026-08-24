@@ -152,6 +152,7 @@ TU Dresden
         groupsNGL[1] = {};
         var waterdisplay = {};
         var watersite_data = {};
+        var persistence_threshold = 0;
 
         var color = [
             '',
@@ -214,7 +215,9 @@ TU Dresden
 
             const r = await fetch("wasimap.json");
             const wasimap = await r.json();
-
+            
+            persistence_threshold = wasimap.config.persistence_threshold
+            
             for (const [name, waterdata] of Object.entries(wasimap.simulations)) {
                 console.log("Opening structure:", name);
                 mutantID = mutantID + 1
@@ -305,24 +308,27 @@ TU Dresden
                                             watpercent = watersites["important_waters"][watid]["residence_percentage"] //For labeling
                                             watres = watersites["important_waters"][watid]["residue"] //For future display
                                             watframes = watersites["important_waters"][watid]["frames"] //For future display
-                                            //if (watpercent >= 5) { //Only grab waters better than 5% residence
+                                            if (watpercent >= persistence_threshold) { //Only show waters better than % residence
                                                 accum_residence += watpercent
                                                 painted.push(watid)
                                                 addthisone = true
 
                                                 waterdisplay[mutantID][residue_name]["waters"].push(watid)
                                                 waterdisplay[mutantID][residue_name]["residence"].push(watersites["important_waters"][watid]["residence_percentage"])
-                                            //}
+                                            }
                                         }
                                     })
 
-                                    if (addthisone && accum_residence > 5) { //Limit residence to 5% (all waters) and upper
+                                    if (addthisone && accum_residence > 5) { //Cummulative combined water residence must be more than 5% of frames to be a water site 
                                         //console.log(involved_waters)
-                                        if (accum_residence > 100){
-                                            accum_residence = 100
-                                        } 
+                                        //if (accum_residence > 100){
+                                        //    accum_residence = 100
+                                        //} 
                                         sites += 1
-                                        //console.log(label1+" "+accum_residence)
+                                        //round residence
+                                        accum_residence = Math.round(accum_residence); 
+
+                                        console.log(label1+" "+accum_residence)
                                         spherePositions1.push({ position: centroid, label: `Site ${sites} (${accum_residence}%)`, resident: accum_residence, siteid: sites })
                                         if (typeof watersite_data[mutantID][sites] === "undefined") {
                                             watersite_data[mutantID][sites] = []

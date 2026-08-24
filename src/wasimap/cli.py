@@ -23,11 +23,7 @@ def build_parser() -> argparse.ArgumentParser:
         wasimap --onlygui 
         (Don't process anything. Open GUI for existing results)
 
-        wasimap --testdata
-        (Download MD test data from Zenodo cloud)
-
-
-        wasimap sim1
+        wasimap sim1 
         (executes analysis on trajectory and topology called sim1)
         """,
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -49,9 +45,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "-r",
         "--persistence",
-        type=int,
-        default=5,
-        help="Minimum percentage of frames a water must reside to be resident (default: 5).",
+        type=float,
+        default=5.0,
+        help="Minimum occupancy to be shown in GUI (default: 5.0). Keep in mind this value is proportional to your total frames",
     )
     parser.add_argument(
         "--gui",
@@ -73,20 +69,21 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--testdata2",
         action="store_true",
-        help="Download thorough MD test data to local dir (approx. 4.8GB)",
+        help="Download thorough MD test data to local dir (approx. 15 GB)",
     )
 
     parser.add_argument(
+        "-m"
         "--min-residence-ps",
         type=float,
-        default=50.0,
+        default=100.0,
         dest="min_residence_ps",
         help=(
             "Minimum accumulated time (in picoseconds) a water must remain near "
-            "an anchor atom to be considered resident, rather than transient noise. "
-            "This floor is expressed in physical time rather than a frame count, "
-            "so it has the same meaning regardless of trajectory frame spacing "
-            "(default: 50.0 ps)."
+            "a heavy-atom to be considered a resident (default: 100.0 ps). Only these"
+            "will be taken into account. Shorter residence times will be discarded."
+            "If the trajectory doesn't report the time step size, it defaults to use"
+            "20 continuous frames" 
         ),
     )
 

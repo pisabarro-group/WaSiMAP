@@ -152,7 +152,7 @@ class WaterMapper:
 
     
     #Constructor... Watch out.. distance threshold comes in nanometers, not angstroms
-    def __init__(self, distance_threshold=0.35, persistence=5, gui=False, onlygui=False, inputs=None, testdata=False, testdata2=False, output_folder="./wasimap_outputs", min_residence_ps=50.0):
+    def __init__(self, distance_threshold=0.35, persistence=5, gui=False, onlygui=False, inputs=None, testdata=False, testdata2=False, output_folder="./wasimap_outputs", min_residence_ps=100.0):
         #Assign Variables
         self.around_nanometers  = distance_threshold #In nanometers
         self.relevance          = persistence/100 #in percentage (int)
@@ -216,21 +216,66 @@ class WaterMapper:
             print("Now you can run 'wasimap --gui'")      
             print("")
             exit(0)
+            
+        #Test Data 2 from public Zenodo repository DOI https://doi.org/10.5281/zenodo.18984212
+        if(self.testdata2):
+            d = Path(self.output_folder)
+            print("")
+            print("Test data II resides at Zenodo, with DOI https://doi.org/10.5281/zenodo.21824367")
+            print("WaSiMap will download 15GB of test MD trajectory data to the current folder")
+            print("")
+            answer = input("Would you like to continue? [y/N]: ").strip().lower()
+            if answer not in ("y", "yes"):
+                print("Aborted by user.")
+                raise SystemExit(0)
+            else:
+                #URL for the 4 files (2 H5 trajectories and 1 NC trajectory, with prmtop topology)
+                urls = [
+                    "https://zenodo.org/records/21824367/files/p41_rep1.h5?download=1",
+                    "https://zenodo.org/records/21824367/files/p41_rep2.h5?download=1",
+                    "https://zenodo.org/records/21824367/files/p41_rep3.h5?download=1",
+                    "https://zenodo.org/records/21824367/files/wt_rep1.h5?download=1",
+                    "https://zenodo.org/records/21824367/files/wt_rep2.h5?download=1",
+                    "https://zenodo.org/records/21824367/files/wt_rep3.h5?download=1",
+                    "https://zenodo.org/records/21824367/files/p41_500ns.h5?download=1",
+                ]
+
+                for url in urls:
+                    filename = os.path.basename(url.split("?")[0])
+                    print(f"Downloading {filename}... from {url}")
+
+                    with requests.get(url, stream=True) as r:
+                        r.raise_for_status()
+                        with open(filename, "wb") as f:
+                            for chunk in r.iter_content(chunk_size=8192):
+                                if chunk:
+                                    f.write(chunk)
+
+                print("All downloads completed") 
+                print("")
+                print("Now you can run 'wasimap --gui'")      
+                print("")
+                exit(0)
 
         if(self.testdata2):
           d = Path(self.output_folder)
           print("")
           print("Dense Test data resides at Zenodo, with DOI https://doi.org/10.5281/zenodo.18984212")
-          print("WaSiMap will download 4.8Mb of test MD trajectory data to the current folder")
+          print("WaSiMap will download 15 GB of test MD trajectory data to the current folder")
           print("")
           answer = input("Would you like to continue? [y/N]: ").strip().lower()
           if answer not in ("y", "yes"):
                 print("Aborted by user.")
                 raise SystemExit(0)
           else:
-            #URL for the 6 files (6 H5 trajectories)
+            #URL for the 7 files (6 H5 trajectories)
             urls = [
                 "https://zenodo.org/records/18984212/files/sim1.h5?download=1",
+                "https://zenodo.org/records/18984212/files/sim2.h5?download=1",
+                "https://zenodo.org/records/18984212/files/sim1.h5?download=1",
+                "https://zenodo.org/records/18984212/files/sim2.h5?download=1",
+                "https://zenodo.org/records/18984212/files/sim1.h5?download=1",
+                "https://zenodo.org/records/18984212/files/sim2.h5?download=1",
                 "https://zenodo.org/records/18984212/files/sim2.h5?download=1",
             ]
 
@@ -278,7 +323,7 @@ class WaterMapper:
           self.md_trajectories = self.scanForTrajs(".") #Scan auto
         else:
           self.md_trajectories = self.resolve_md_pair(self.inputs) #check traj and top exist with given name
-
+    
 
 
         #Enumerate & confirm if user wants to proceed
@@ -330,7 +375,7 @@ class WaterMapper:
         bundle = {
             "simulations": {},   # dict of many sim results
             "config": {"distance_cutoff": self.around_nanometers, "persistence_threshold": self.relevance*100, "min_residence_ps": self.min_residence_ps},        # optional: cutoff, thresholds, etc.
-            "meta": {"generator": "WaSiMap","timestamp": datetime.utcnow().isoformat()},          # optional: timestamps, versions, etc.
+            "meta": {"generator": "WaSiMAP","timestamp": datetime.utcnow().isoformat()},          # optional: timestamps, versions, etc.
         }
 
         #FOR EACH TRAJECTORY FOUND, START MAIN ROUTINE
@@ -397,7 +442,7 @@ class WaterMapper:
     #Scan for trajectory/topology combos in the current directory
     def scanForTrajs(self, d="."):
         d = Path(d)
-        files = [f for f in d.iterdir() if f.is_file()]
+        files = [f for f in sorted(d.iterdir()) if f.is_file()]
         topo_by_stem = {f.stem: f.name for f in files if f.suffix.lower() in TOPOLOGY_EXTS}
         trajs = [f for f in files if f.suffix.lower() in TRAJECTORY_EXTS]
 
@@ -585,7 +630,7 @@ class WaterMapper:
                 print(f"{len(waters)} waters crossed near anchor-atom {anchor}")
                 aguas = []
                 for atom, frames in owat.items(): #atom is the water atom ID, frames is an array of frames where water was near anchor
-                    if len(frames) >= relevant:
+                    if len(frames) >= min_residence_frames: #PEDRO 2026. Change for residence frames instead of % of frames 
                         print(f"Appending {atom} to list of importants ({len(frames)} frames)")
                         
                         if importantwaters.get(str(atom)) == None:
@@ -598,7 +643,7 @@ class WaterMapper:
                         # Compute the average position (x, y, z)
                         average_position = np.mean(atom_coords, axis=0)#get the mean 3D position of this water (defines a water site)
                         average_position *= 10 #convert to Angstroms (units are in nanometers)
-                        importantwaters[str(atom)]['residence_percentage']  = round((len(frames)/nframes)*100) #Get the residence time of this water
+                        importantwaters[str(atom)]['residence_percentage']  = round((len(frames)/nframes)*100, 3) #Get the residence percentage of this water
                         importantwaters[str(atom)]['wetspot']  = average_position.tolist() #Numpy array
                         #x_avg, y_avg, z_avg = average_position 
                         #print(f"X  : {x_avg}, Y: {y_avg}, Z: {z_avg}")
@@ -607,6 +652,7 @@ class WaterMapper:
                         
                         anchorcontacts[anchor]['residue'] = str(traj.topology.atom(int(anchor))) #anchorpoint residue in RESPOS-ATOM format
                         aguas.append(int(atom)) 
+                
                 if len(aguas) > 0:
                     
                     #BUILD WATERSITES
