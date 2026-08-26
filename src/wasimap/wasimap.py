@@ -11,7 +11,8 @@ from __future__ import annotations
 import mdtraj as md
 import numpy as np
 from multiprocessing import Process
-from multiprocessing import Manager 
+from multiprocessing import Manager
+from multiprocessing import Semaphore
 from pathlib import Path
 from datetime import datetime
 
@@ -19,7 +20,7 @@ from importlib.resources import files
 from pathlib import Path
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from functools import partial
-import threading, webbrowser, json, shutil, time, sys, requests, os
+import threading, webbrowser, json, shutil, time, sys, requests, os, tempfile
 
 #MDTraj compatible formats (to March 2026)
 TRAJECTORY_EXTS = {".xtc", ".trr", ".dcd", ".nc", ".h5", ".hdf5", ".lh5", ".binpos"}
@@ -87,6 +88,43 @@ SOLVENTS = {
 }
 
 
+# True only on Windows, where multiprocessing must use "spawn" instead of "fork".
+# The memmap + semaphore workarounds below are gated on this flag, so the
+# Linux path keeps using the original fork-based behavior untouched.
+IS_WINDOWS = sys.platform.startswith("win")
+
+
+#/////////////////////////////////////////////////////////////////////////////
+#
+# Finds the longest unbroken run of consecutive frame numbers in a sorted list.
+#
+# This matters because a water molecule can rack up a large total frame count
+# just by drifting near an anchor in short, unrelated visits scattered across
+# a long trajectory, without ever being biologically resident. A resident
+# water sits continuously for a stretch (e.g. 100 to 400 ps), so residence
+# should be judged on the longest continuous stay, not the sum of every visit
+# ever recorded. Using a contiguous-run count instead of a cumulative total
+# also keeps the water count from growing out of proportion on longer
+# trajectories, since incidental total occupancy scales with trajectory
+# length while true contiguous residence duration does not.
+#
+# frame_indices: sorted list of frame numbers where a water was within cutoff
+#                distance of the anchor atom (as built in processAtom).
+#
+def longest_contiguous_run(frame_indices):
+    if not frame_indices:
+        return 0
+    longest_run_length = 1
+    current_run_length = 1
+    for previous_frame, current_frame in zip(frame_indices, frame_indices[1:]):
+        if current_frame == previous_frame + 1:
+            current_run_length = current_run_length + 1
+            longest_run_length = max(longest_run_length, current_run_length)
+        else:
+            current_run_length = 1
+    return longest_run_length
+
+
 # This class extends SimpleHTTPRequestHandler, it 
 # overrides end_headers to force no cache, and log_message() 
 # to dump web server events to stdout
@@ -110,38 +148,75 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
 # id:         atomID of heavy-atom
 # anchordict: the result array
 # waters:     IDs of every water oxygen in the trajectory
-# trajxyz:    XYZ numpy array of traj object (passing the entire traj would eat up the memory)
+# trajectory_data: on Linux, this is the XYZ numpy array of the traj object directly
+#                   (passing the entire traj would eat up the memory). On Windows,
+#                   this is a (path, shape, dtype) tuple describing a memmapped file,
+#                   since spawn would otherwise pickle the whole array into every
+#                   child process and can exhaust memory/pipes on large trajectories.
 # around_nanometers: cuttoff distance
 # min_residence_frames: minimum number of frames a water must be near the anchor
 #                        to be considered resident (rather than transient noise).
 #                        Computed by the caller from a fixed time floor so its 
 #                        physical meaning (e.g. 50 ps) stays constant regardless of frame spacing.
+# concurrency_limiter: on Windows, a real Semaphore capping how many workers run
+#                       at once. On Linux, this is None and has no effect, keeping
+#                       the original unrestricted-Process behavior unchanged.
 #
-def processAtom(id, anchordict, waters, trajxyz, around_nanometers, min_residence_frames):
-    #for id in involved_ids:
-    print(f"Processing AtomID {id}")
-    wadict = {}
-    for water in waters:
-        #This is the magic.. we use numpy to compute euclideans from all waters to a heavy-atom, for all frames, in a flash :)
-        framebyframe = np.sqrt(np.sum((trajxyz[:, water, :] - trajxyz[:, id, :])**2, axis=1))
-        framenum = 0
-        selectedframes = [] #Stores coordinates of frames
-        for euclidean in framebyframe: #Iterate euclidean distance of waters to IDS in the matrix
-            if euclidean <= around_nanometers:
-                    if wadict.get(water) == None:
-                        wadict[water] = []
-                    selectedframes.append(framenum)
-            framenum=framenum+1
-        wadict[water] = selectedframes
-        if wadict.get(water) != None:
-            # Ditch transient/noise waters. 
-            # derived from a fixed time floor (WaterMapper.min_residence_ps) so this
-            # filter means the same physical thing regardless of report_interval.
-            if len(wadict[water]) < min_residence_frames:
-                wadict.pop(water)
-    anchordict[id] = wadict
-    #print(anchordict)
-    print(f"##############FINISHED HEAVY-ATOM {id}###############")
+def processAtom(id, anchordict, waters, trajectory_data, around_nanometers, min_residence_frames, concurrency_limiter=None):
+    # On Windows, this blocks until a worker slot is free. On Linux,
+    # concurrency_limiter is None, so this is skipped entirely and behavior
+    # is identical to the original program.
+    if concurrency_limiter is not None:
+        concurrency_limiter.acquire()
+    try:
+        #for id in involved_ids:
+        print(f"Processing AtomID {id}")
+
+        # On Windows, trajectory_data is a (path, shape, dtype) tuple describing
+        # a memmapped file. On Linux, trajectory_data is traj.xyz itself, exactly
+        # like the original code, since fork shares it with children for free.
+        if isinstance(trajectory_data, tuple):
+            trajectory_memmap_path, trajectory_shape, trajectory_dtype = trajectory_data
+            trajxyz = np.memmap(
+                trajectory_memmap_path,
+                dtype=trajectory_dtype,
+                mode="r",
+                shape=trajectory_shape,
+            )
+        else:
+            trajxyz = trajectory_data
+
+        wadict = {}
+        for water in waters:
+            #This is the magic.. we use numpy to compute euclideans from all waters to a heavy-atom, for all frames, in a flash :)
+            framebyframe = np.sqrt(np.sum((trajxyz[:, water, :] - trajxyz[:, id, :])**2, axis=1))
+            framenum = 0
+            selectedframes = [] #Stores coordinates of frames
+            for euclidean in framebyframe: #Iterate euclidean distance of waters to IDS in the matrix
+                if euclidean <= around_nanometers:
+                        if wadict.get(water) == None:
+                            wadict[water] = []
+                        selectedframes.append(framenum)
+                framenum=framenum+1
+            wadict[water] = selectedframes
+            if wadict.get(water) != None:
+                # Ditch transient/noise waters.
+                # Filtered on the LONGEST CONTIGUOUS run of frames near the anchor,
+                # not the cumulative total, so a water isn't counted as resident
+                # just because it made several brief, unrelated visits over a long
+                # trajectory. The threshold itself is derived from a fixed time
+                # floor (WaterMapper.min_residence_ps) so this filter means the
+                # same physical thing regardless of report_interval or trajectory length.
+                if longest_contiguous_run(wadict[water]) < min_residence_frames:
+                    wadict.pop(water)
+        anchordict[id] = wadict
+        #print(anchordict)
+        print(f"##############FINISHED HEAVY-ATOM {id}###############")
+    finally:
+        # Always release, even if this worker raised an exception, otherwise
+        # a crashed worker permanently eats one concurrency slot.
+        if concurrency_limiter is not None:
+            concurrency_limiter.release()
 
 
 class WaterMapper:
@@ -179,8 +254,8 @@ class WaterMapper:
         print(f"Structural Bioinformatics Group. BIOTEC. TU Dresden 2026")
         print(f"If you find our work useful, please cite us")
 
-        #If testdata is to be downloaded
-        #Test Data from public Zenodo repository DOI https://doi.org/10.5281/zenodo.18984212
+        # If testdata is to be downloaded
+        # Test Data from public Zenodo repository DOI https://doi.org/10.5281/zenodo.18984212 
         if(self.testdata):
           d = Path(self.output_folder)
           print("")
@@ -236,8 +311,7 @@ class WaterMapper:
                     "https://zenodo.org/records/21824367/files/p41_rep3.h5?download=1",
                     "https://zenodo.org/records/21824367/files/wt_rep1.h5?download=1",
                     "https://zenodo.org/records/21824367/files/wt_rep2.h5?download=1",
-                    "https://zenodo.org/records/21824367/files/wt_rep3.h5?download=1",
-                    "https://zenodo.org/records/21824367/files/p41_500ns.h5?download=1",
+                    "https://zenodo.org/records/21824367/files/wt_rep3.h5?download=1"
                 ]
 
                 for url in urls:
@@ -253,49 +327,15 @@ class WaterMapper:
 
                 print("All downloads completed") 
                 print("")
-                print("Now you can run 'wasimap --gui'")      
+                print("Run: 'wasimap --gui -m 100 -r 0.5'")      
+                print('HINT: Parameter -r (residence threshold) is adjusted to the simulation length (0.5% of the simulation).')
                 print("")
+                print("-------------------------------------------------------------")
+                print("To test wasimap with the 500 ns sample simulation, download the file and run standalone into a separate folder:")
+                print("https://zenodo.org/records/21824367/files/p41_500ns.h5?download=1")
                 exit(0)
 
-        if(self.testdata2):
-          d = Path(self.output_folder)
-          print("")
-          print("Dense Test data resides at Zenodo, with DOI https://doi.org/10.5281/zenodo.18984212")
-          print("WaSiMap will download 15 GB of test MD trajectory data to the current folder")
-          print("")
-          answer = input("Would you like to continue? [y/N]: ").strip().lower()
-          if answer not in ("y", "yes"):
-                print("Aborted by user.")
-                raise SystemExit(0)
-          else:
-            #URL for the 7 files (6 H5 trajectories)
-            urls = [
-                "https://zenodo.org/records/18984212/files/sim1.h5?download=1",
-                "https://zenodo.org/records/18984212/files/sim2.h5?download=1",
-                "https://zenodo.org/records/18984212/files/sim1.h5?download=1",
-                "https://zenodo.org/records/18984212/files/sim2.h5?download=1",
-                "https://zenodo.org/records/18984212/files/sim1.h5?download=1",
-                "https://zenodo.org/records/18984212/files/sim2.h5?download=1",
-                "https://zenodo.org/records/18984212/files/sim2.h5?download=1",
-            ]
-
-            for url in urls:
-                filename = os.path.basename(url.split("?")[0])
-                print(f"Downloading {filename}... from {url}")
-
-                with requests.get(url, stream=True) as r:
-                    r.raise_for_status()
-                    with open(filename, "wb") as f:
-                        for chunk in r.iter_content(chunk_size=8192):
-                            if chunk:
-                                f.write(chunk)
-
-            print("All downloads completed") 
-            print("")
-            print("Now you can run 'wasimap --gui'")      
-            print("")
-            exit(0)
-
+        
 
 
 
@@ -605,18 +645,58 @@ class WaterMapper:
             waterdict = {}
             anchordict = manager.dict() #Shared proxy object.. we need child forks to propagate back
             jobs    = [] #Process pool
-            
+
+            # temporary_directory only gets created/used on Windows, kept here
+            # so it's in scope for the cleanup step further down.
+            temporary_directory = None
+
+            if IS_WINDOWS:
+                # spawn (not fork) means child processes can't share memory with the
+                # parent, so passing traj.xyz directly gets pickled into every
+                # process and can exhaust memory/pipes on large trajectories.
+                # Write the coordinates once to a memmapped file instead, and cap
+                # how many workers run at once with a semaphore. This whole
+                # branch only runs on Windows, Linux is untouched below.
+                trajectory_coordinates = traj.xyz
+                trajectory_shape = trajectory_coordinates.shape
+                trajectory_dtype = trajectory_coordinates.dtype
+
+                temporary_directory = tempfile.mkdtemp(prefix="wasimap_")
+                trajectory_memmap_path = str(Path(temporary_directory) / "trajectory_coords.dat")
+
+                trajectory_memmap_for_writing = np.memmap(
+                    trajectory_memmap_path,
+                    dtype=trajectory_dtype,
+                    mode="w+",
+                    shape=trajectory_shape,
+                )
+                trajectory_memmap_for_writing[:] = trajectory_coordinates[:]
+                trajectory_memmap_for_writing.flush()
+                del trajectory_memmap_for_writing  # release the write handle before workers open it read only
+
+                trajectory_data = (trajectory_memmap_path, trajectory_shape, trajectory_dtype)
+                concurrency_limiter = Semaphore(os.cpu_count())
+            else:
+                # Original Linux behavior, unchanged. fork gives child processes
+                # copy-on-write access to traj.xyz for free, so no serialization
+                # and no concurrency cap are needed here.
+                trajectory_data = traj.xyz
+                concurrency_limiter = None
+
             #Create a process per AtomID
             for id in involved_ids:
                 anchordict[id] = {}
-                p = Process(target=processAtom, args=(id, anchordict, waters, traj.xyz, around_nanometers, min_residence_frames))
+                p = Process(target=processAtom, args=(id, anchordict, waters, trajectory_data, around_nanometers, min_residence_frames, concurrency_limiter))
                 jobs.append(p)
                 p.start()
 
             #Launch parallel jobs    
             for proc in jobs:
                 proc.join()
-                        
+
+            if IS_WINDOWS and temporary_directory is not None:
+                shutil.rmtree(temporary_directory, ignore_errors=True)
+
             #print("this is what came out")
             #print(anchordict)
             #Define a list of important water ids

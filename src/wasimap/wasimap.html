@@ -154,6 +154,14 @@ TU Dresden
         var watersite_data = {};
         var persistence_threshold = 0;
 
+        // Maximum number of individual water badges rendered per site in the
+        // modal. Even after backend deduplication a site can legitimately have
+        // many resident waters over a long trajectory (water exchange), and
+        // rendering hundreds of badges (each previously getting its own
+        // bootstrap.Tooltip instance) is what froze the tab on long trajectories.
+        // Extra waters beyond this cap are summarized instead of rendered.
+        const MAX_BADGES_SHOWN_PER_SITE = 30;
+
         var color = [
             '',
             '#898989', //grey    
@@ -467,6 +475,56 @@ TU Dresden
             });
         }
 
+        // Builds the water badge HTML for a single site, capped at
+        // MAX_BADGES_SHOWN_PER_SITE. This is what used to loop over every
+        // water in the site unconditionally; on long trajectories with
+        // hundreds of resident waters per site, that meant hundreds of
+        // string-replace calls and (previously) hundreds of Tooltip
+        // instantiations per click. Waters beyond the cap are summarized
+        // instead of individually rendered.
+        function buildWaterBadgeHtml(trajectoryNumber, residueName) {
+            const waterIds = waterdisplay[trajectoryNumber][residueName]["waters"];
+            const residenceValues = waterdisplay[trajectoryNumber][residueName]["residence"];
+
+            const badgeHtmlParts = [];
+            const badgeCountToShow = Math.min(waterIds.length, MAX_BADGES_SHOWN_PER_SITE);
+
+            for (let index = 0; index < badgeCountToShow; index++) {
+                const waterId = waterIds[index];
+                const residenceValue = residenceValues[index];
+                let badgeHtml = singlewater.replace(/RESID/g, residenceValue);
+                badgeHtml = badgeHtml.replace(/WATID/g, waterId);
+                badgeHtml = badgeHtml.replace(/WATCLA/g, "wat_" + waterId);
+                badgeHtmlParts.push(badgeHtml);
+            }
+
+            if (waterIds.length > MAX_BADGES_SHOWN_PER_SITE) {
+                const remainingCount = waterIds.length - MAX_BADGES_SHOWN_PER_SITE;
+                badgeHtmlParts.push(`<span class="text-muted ms-1">+${remainingCount} more</span>`);
+            }
+
+            // join() avoids the repeated string reallocation that += causes
+            // in a loop, which mattered once badge counts got large.
+            return badgeHtmlParts.join("");
+        }
+
+        // Appends the table row for a single water site into #sitecontents.
+        // Pulled out of mySphereCallback so only the clicked site needs to be
+        // built, instead of rebuilding every site in the structure each time.
+        function appendSiteRow(trajectoryNumber, residueName, siteSummary, clickedSiteId) {
+            const watinfo = buildWaterBadgeHtml(trajectoryNumber, residueName);
+
+            let row = watersiterow.replace(/SITEID/g, siteSummary["siteid"]);
+            if (siteSummary["siteid"] == clickedSiteId) {
+                row = row.replace(/class=""/g, 'class="table-success"');
+            }
+            row = row.replace(/RESIDUE/g, residueName);
+            row = row.replace(/TOTALWATERS/g, waterdisplay[trajectoryNumber][residueName]["waters"].length);
+            row = row.replace(/WATERATOMS/g, watinfo);
+            row = row.replace(/RESIDENCE/g, siteSummary["resident_percentage"]);
+            $("#sitecontents").append(row);
+        }
+
         //Handle Water site click - Display details
         function mySphereCallback(trajectoryNumber, label, siteid) {
             console.log("sphere clicked:", trajectoryNumber, label);
@@ -475,39 +533,21 @@ TU Dresden
 
             modalElement = document.getElementById('waterSiteModal')
             modal = new bootstrap.Modal(modalElement)
-            //Fill modal table with water site content
-            
-            data = "";
-            $("#sitecontents").html("")
-            Object.keys(watersite_data[trajectoryNumber]).forEach(function (key) {
-               data = watersite_data[trajectoryNumber][key][0];
-               res = data["residue_around"];
-               iter = 0
-               watinfo = "";
-               waterdisplay[trajectoryNumber][res]["waters"].forEach(function (wat){
-                    watelem = singlewater.replace(/RESID/g, waterdisplay[trajectoryNumber][res]["residence"][iter]);
-                    watelem = watelem.replace(/WATID/g, wat);
-                    watelem = watelem.replace(/WATCLA/g, "wat_"+wat);
-                    
-                    iter++
-                    watinfo += watelem;
-               })
-               
-               row = watersiterow.replace(/SITEID/g, data["siteid"]);
-               //make the clicked sphere green on the table
-               if(data["siteid"] == siteid){
-                console.log("painting")                
-                  row = row.replace(/class=""/g, 'class="table-success"');  
-               }
-               row = row.replace(/RESIDUE/g, res);
-               row = row.replace(/TOTALWATERS/g, waterdisplay[trajectoryNumber][res]["waters"].length);
-               row = row.replace(/WATERATOMS/g, watinfo);
-               row = row.replace(/RESIDENCE/g, data["resident_percentage"]);   
-               $("#sitecontents").append(row)
-            })
-            ///////////////////////////////////////////
 
-            //Shwo modal box
+            $("#sitecontents").html("")
+
+            // Only render the site the user actually clicked, instead of
+            // rebuilding every site for this structure on every click. This
+            // (together with the badge cap above) is what was freezing the
+            // tab on long trajectories with many sites and many waters per site.
+            const clickedSiteData = watersite_data[trajectoryNumber][siteid];
+            if (clickedSiteData) {
+                const siteSummary = clickedSiteData[0];
+                const residueName = siteSummary["residue_around"];
+                appendSiteRow(trajectoryNumber, residueName, siteSummary, siteid);
+            }
+
+            //Show modal box
             modal.show()
 
             modalElement.addEventListener('hidden.bs.modal', function () {
@@ -516,12 +556,28 @@ TU Dresden
                 document.body.style.removeProperty('padding-right')
                 document.body.style.removeProperty('overflow')
             })
-
-            const tooltipTriggerList = [].slice.call(
-                modalElement.querySelectorAll('[data-bs-toggle="tooltip"]')
-            )
-            tooltipTriggerList.forEach(el => new bootstrap.Tooltip(el))
         }
+
+        // Delegated tooltip handling for water badges. Previously every badge
+        // got its own `new bootstrap.Tooltip(el)` instance created up front,
+        // which meant hundreds to thousands of synchronous Tooltip
+        // constructions on a single click when a site had many waters, this
+        // was the actual cause of the tab freezing. Instead, a tooltip is
+        // created only for the badge currently being hovered, and disposed of
+        // on mouseleave so instances never accumulate.
+        $(document).on('mouseenter', '#waterSiteModal .water-id-badge', function () {
+            if (!bootstrap.Tooltip.getInstance(this)) {
+                new bootstrap.Tooltip(this);
+            }
+            bootstrap.Tooltip.getInstance(this).show();
+        });
+
+        $(document).on('mouseleave', '#waterSiteModal .water-id-badge', function () {
+            const existingTooltip = bootstrap.Tooltip.getInstance(this);
+            if (existingTooltip) {
+                existingTooltip.dispose();
+            }
+        });
 
         //Small listeners to hadle button hovers
         $(document).on('mouseenter', '.water-id-badge', function () {
